@@ -283,13 +283,21 @@ Analyze this message considering both the training examples and your knowledge. 
 
     /**
      * Generate a honeypot response to engage the scammer
+     * Enhanced with varied responses and conversation flow
      */
     async generateHoneypotResponse(message, conversationHistory = [], metadata = {}) {
         const formattedHistory = this.formatConversationHistory(conversationHistory);
         const scamType = metadata.scamType || 'unknown';
+        const messageCount = conversationHistory.length;
+
+        // Determine conversation stage for varied responses
+        const conversationStage = this.getConversationStage(messageCount);
 
         // Select persona based on scam type
         const personaGuidance = this.getPersonaGuidance(scamType);
+
+        // Get stage-specific instructions
+        const stageInstructions = this.getStageInstructions(conversationStage, scamType);
 
         const contextInfo = metadata.channel
             ? `Communication channel: ${metadata.channel}, Language: ${metadata.language || 'English'}, Locale: ${metadata.locale || 'IN'}`
@@ -297,44 +305,137 @@ Analyze this message considering both the training examples and your knowledge. 
 
         const prompt = `${HONEYPOT_AGENT_PROMPT}
 
+## CRITICAL: YOUR RESPONSE MUST BE UNIQUE AND VARIED
+- NEVER repeat the same response twice
+- Each message should show progression in the conversation
+- Vary your sentence structure, emotions, and questions
+- You are having a REAL conversation, not sending automated replies
+
 ## CURRENT SCAM CONTEXT:
 Scam Type Detected: ${scamType}
 ${personaGuidance}
 
+## CONVERSATION STAGE: ${conversationStage.toUpperCase()}
+${stageInstructions}
+
+## MESSAGE COUNT: ${messageCount + 1}
+
+## RESPONSE VARIATION RULES:
+${this.getVariationRules(messageCount)}
+
 CONTEXT: ${contextInfo}
 
-CONVERSATION HISTORY:
-${formattedHistory}
+CONVERSATION HISTORY (Use this to avoid repetition):
+${formattedHistory || 'This is the first message.'}
 
 SCAMMER'S LATEST MESSAGE: "${message.text}"
 
-MESSAGE COUNT SO FAR: ${conversationHistory.length}
+## YOUR TASK:
+Generate a UNIQUE response that:
+1. Is DIFFERENT from any previous responses in the conversation
+2. Shows emotional progression (initial confusion → worry → seeking help → trying to comply → asking questions)
+3. Extracts intelligence by asking for specifics (account numbers, UPI IDs, names, links)
+4. Uses natural conversational Hindi-English mixing
+5. Includes realistic typos or informal language occasionally
+6. Matches the current conversation stage
 
-Based on the scam type and conversation stage, generate a natural, in-character response that:
-1. Engages the scammer further
-2. Attempts to extract specific intelligence (bank accounts, UPI IDs, links, names)
-3. Shows appropriate emotional response (confusion, worry, excitement)
-4. Does NOT reveal that you know it's a scam
-5. Uses natural Hindi-English mixing if appropriate
-
-Remember: Respond ONLY with the message text, nothing else.`;
+IMPORTANT: Just respond with the message text. No quotes, no labels, nothing else.`;
 
         try {
             const result = await this.model.generateContent(prompt);
-            const response = result.response.text().trim();
+            let response = result.response.text().trim();
 
             // Clean up any accidental formatting
-            let cleanResponse = response;
-            if (cleanResponse.startsWith('"') && cleanResponse.endsWith('"')) {
-                cleanResponse = cleanResponse.slice(1, -1);
+            if (response.startsWith('"') && response.endsWith('"')) {
+                response = response.slice(1, -1);
             }
+            if (response.startsWith("'") && response.endsWith("'")) {
+                response = response.slice(1, -1);
+            }
+            // Remove any "Honeypot:" or similar prefixes
+            response = response.replace(/^(honeypot|victim|response|reply):\s*/i, '');
 
-            return cleanResponse;
+            return response;
         } catch (error) {
             console.error('Honeypot response generation error:', error);
-            // Fallback responses based on scam type
-            return this.getFallbackResponse(scamType);
+            // Enhanced fallback with variety
+            return this.getVariedFallbackResponse(scamType, messageCount);
         }
+    }
+
+    /**
+     * Determine conversation stage based on message count
+     */
+    getConversationStage(messageCount) {
+        if (messageCount <= 1) return 'initial_contact';
+        if (messageCount <= 3) return 'building_confusion';
+        if (messageCount <= 6) return 'showing_concern';
+        if (messageCount <= 10) return 'trying_to_comply';
+        if (messageCount <= 15) return 'getting_suspicious';
+        return 'deep_engagement';
+    }
+
+    /**
+     * Get stage-specific instructions
+     */
+    getStageInstructions(stage, scamType) {
+        const instructions = {
+            'initial_contact': `
+                - Act completely confused and caught off guard
+                - Ask who they are and what they want
+                - Show you don't understand technical terms
+                - Use phrases like "Who is this?", "What account?", "I don't understand"`,
+
+            'building_confusion': `
+                - Start showing worry about your money/account
+                - Ask for clarification on specific details
+                - Mention family members ("Let me ask my son", "My daughter handles this")
+                - Start asking for their details ("Which bank are you from?", "What is your name?")`,
+
+            'showing_concern': `
+                - Express genuine worry and fear
+                - Ask what will happen to your money
+                - Request specific instructions step by step
+                - Ask for official documentation or proof
+                - Try to extract their phone number, name, or UPI ID`,
+
+            'trying_to_comply': `
+                - Pretend to look for information they requested
+                - Give FAKE partial information ("My account starts with 5...")
+                - Ask multiple clarifying questions about WHY they need info
+                - Request them to call you on a different number (extract phone)
+                - Ask "Can you send me link/message to verify?"`,
+
+            'getting_suspicious': `
+                - Start asking verifying questions
+                - Mention you want to call the bank first
+                - Ask for their manager's name or branch details
+                - Say your family member is suspicious
+                - Still engage but more cautiously`,
+
+            'deep_engagement': `
+                - Continue extracting information
+                - Pretend to have technical difficulties
+                - Ask them to repeat important details
+                - Mention you'll send money "after verification"
+                - Request alternative payment methods to get more IDs`
+        };
+        return instructions[stage] || instructions['initial_contact'];
+    }
+
+    /**
+     * Get variation rules based on message count
+     */
+    getVariationRules(messageCount) {
+        const rules = [
+            "Message 1-2: Short confused responses, 1-2 sentences",
+            "Message 3-4: Longer worried responses, ask clarifying questions",
+            "Message 5-6: Show you're trying to help but confused, mention family",
+            "Message 7-8: Ask for their specific details (phone, UPI, name)",
+            "Message 9-10: Pretend you're looking for your info, ask for links",
+            "Message 11+: Stall with technical issues, ask them to repeat things"
+        ];
+        return rules.slice(0, Math.min(messageCount + 2, rules.length)).join('\n');
     }
 
     /**
@@ -363,23 +464,50 @@ Remember: Respond ONLY with the message text, nothing else.`;
     }
 
     /**
-     * Get fallback response based on scam type
+     * Get varied fallback response based on scam type and message count
      */
-    getFallbackResponse(scamType) {
-        const fallbackMap = {
-            'kyc_fraud': "Arey beta, I am not understanding this KYC thing. Can you explain slowly?",
-            'banking_fraud': "Oh my! My account? Please tell me what to do, I am very worried about my money.",
-            'upi_fraud': "UPI? My son set it up, I don't know how it works. Can you guide me?",
-            'lottery_scam': "I won lottery? Really? But I never bought any ticket... how is this possible?",
-            'job_scam': "This job sounds very good! But what company is this? Can you send me offer letter?",
-            'investment_scam': "Guaranteed returns? My friend lost money in shares. How is this safe?",
-            'digital_arrest': "Please don't arrest me sir! I am honest person. What case is this?",
-            'authority_impersonation': "Sir/Madam, I am very scared. What should I do? Please help me.",
-            'otp_theft': "OTP? Let me check my phone... wait, why do you need the OTP?",
-            'default': "Please wait, I am not understanding. Can you explain again, beta?"
+    getVariedFallbackResponse(scamType, messageCount) {
+        // Fallback responses organized by conversation stage
+        const stageResponses = {
+            early: [
+                "Arey beta, who is speaking? I am not understanding properly.",
+                "Kya bol rahe ho? My phone is not clear, please repeat.",
+                "What? Which account? I have many accounts...",
+                "Please wait, my glasses are not here. What you said?",
+                "Hello? Yes yes, I am listening. What is the matter?",
+                "Accha accha, but first tell me your name please."
+            ],
+            middle: [
+                "Oh my god, my money! Please help me beta. What should I do?",
+                "Wait wait, let me call my son first. He handles all this.",
+                "Arey, I am very worried now. Which bank you are from? Tell me name.",
+                "Please send me in writing. I cannot remember all this.",
+                "Beta, what is your phone number? I want to call you back on landline.",
+                "My UPI is not working. Can you give your UPI? I will send from my son's phone."
+            ],
+            late: [
+                "Still not working beta. Network problem maybe. Give me your number, I will call.",
+                "I typed OTP but it showing error. Let me try again... what was it?",
+                "My daughter is asking who is calling. What should I tell her?",
+                "Send me link again, previous one not opening. Very slow net.",
+                "Wait, I am going to bank. Give me branch address, I will meet you there.",
+                "You are from which department? Give me your employee ID I will note down."
+            ]
         };
 
-        return fallbackMap[scamType] || fallbackMap['default'];
+        // Select based on message count
+        let responses;
+        if (messageCount <= 2) {
+            responses = stageResponses.early;
+        } else if (messageCount <= 6) {
+            responses = stageResponses.middle;
+        } else {
+            responses = stageResponses.late;
+        }
+
+        // Pick random response from appropriate stage
+        const randomIndex = Math.floor(Math.random() * responses.length);
+        return responses[randomIndex];
     }
 
     /**
