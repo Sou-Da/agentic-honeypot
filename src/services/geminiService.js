@@ -290,6 +290,16 @@ Analyze this message considering both the training examples and your knowledge. 
         const scamType = metadata.scamType || 'unknown';
         const messageCount = conversationHistory.length;
 
+        // Extract previous honeypot responses to avoid repetition
+        const previousResponses = conversationHistory
+            .filter(msg => msg.sender === 'honeypot' || msg.sender === 'victim')
+            .map(msg => msg.text)
+            .slice(-5); // Last 5 responses
+
+        const responsesToAvoid = previousResponses.length > 0
+            ? `\n## ⚠️ DO NOT USE THESE PHRASES (already used):\n${previousResponses.map((r, i) => `${i + 1}. "${r}"`).join('\n')}\n`
+            : '';
+
         // Determine conversation stage for varied responses
         const conversationStage = this.getConversationStage(messageCount);
 
@@ -303,43 +313,43 @@ Analyze this message considering both the training examples and your knowledge. 
             ? `Communication channel: ${metadata.channel}, Language: ${metadata.language || 'English'}, Locale: ${metadata.locale || 'IN'}`
             : 'Communication channel: SMS, Language: English, Locale: IN';
 
+        // Generate unique seed based on message count to encourage variety
+        const varietySeed = `Response #${messageCount + 1} - Be creative and different!`;
+
         const prompt = `${HONEYPOT_AGENT_PROMPT}
 
-## CRITICAL: YOUR RESPONSE MUST BE UNIQUE AND VARIED
-- NEVER repeat the same response twice
-- Each message should show progression in the conversation
-- Vary your sentence structure, emotions, and questions
-- You are having a REAL conversation, not sending automated replies
+## 🚨 CRITICAL: AVOID REPETITION
+${responsesToAvoid}
+Your response MUST be completely different from the above. Use different words, different sentence structure, different questions.
+
+## ${varietySeed}
 
 ## CURRENT SCAM CONTEXT:
 Scam Type Detected: ${scamType}
 ${personaGuidance}
 
-## CONVERSATION STAGE: ${conversationStage.toUpperCase()}
+## CONVERSATION STAGE: ${conversationStage.toUpperCase()} (Message ${messageCount + 1})
 ${stageInstructions}
 
-## MESSAGE COUNT: ${messageCount + 1}
-
-## RESPONSE VARIATION RULES:
-${this.getVariationRules(messageCount)}
+## WHAT TO DO NOW (Message ${messageCount + 1}):
+${this.getSpecificAction(messageCount, scamType)}
 
 CONTEXT: ${contextInfo}
 
-CONVERSATION HISTORY (Use this to avoid repetition):
+FULL CONVERSATION SO FAR:
 ${formattedHistory || 'This is the first message.'}
 
 SCAMMER'S LATEST MESSAGE: "${message.text}"
 
-## YOUR TASK:
-Generate a UNIQUE response that:
-1. Is DIFFERENT from any previous responses in the conversation
-2. Shows emotional progression (initial confusion → worry → seeking help → trying to comply → asking questions)
-3. Extracts intelligence by asking for specifics (account numbers, UPI IDs, names, links)
-4. Uses natural conversational Hindi-English mixing
-5. Includes realistic typos or informal language occasionally
-6. Matches the current conversation stage
+## GENERATE YOUR RESPONSE:
+- Must be UNIQUE (not similar to previous responses)
+- Use Hindi-English naturally
+- Show genuine emotion for this stage
+- Try to extract: UPI ID, phone number, bank details, links
+- 2-4 sentences max
+- No quotes or labels
 
-IMPORTANT: Just respond with the message text. No quotes, no labels, nothing else.`;
+YOUR REPLY:`;
 
         try {
             const result = await this.model.generateContent(prompt);
@@ -352,15 +362,62 @@ IMPORTANT: Just respond with the message text. No quotes, no labels, nothing els
             if (response.startsWith("'") && response.endsWith("'")) {
                 response = response.slice(1, -1);
             }
-            // Remove any "Honeypot:" or similar prefixes
-            response = response.replace(/^(honeypot|victim|response|reply):\s*/i, '');
+            // Remove any prefixes
+            response = response.replace(/^(honeypot|victim|response|reply|your reply):\s*/i, '');
+            response = response.replace(/^["']|["']$/g, '');
+
+            // Check if response is too similar to previous ones
+            const isDuplicate = previousResponses.some(prev =>
+                this.calculateSimilarity(prev.toLowerCase(), response.toLowerCase()) > 0.7
+            );
+
+            if (isDuplicate) {
+                console.log('⚠️ Duplicate response detected, generating alternative...');
+                return this.getVariedFallbackResponse(scamType, messageCount, previousResponses);
+            }
 
             return response;
         } catch (error) {
             console.error('Honeypot response generation error:', error);
-            // Enhanced fallback with variety
-            return this.getVariedFallbackResponse(scamType, messageCount);
+            return this.getVariedFallbackResponse(scamType, messageCount, previousResponses);
         }
+    }
+
+    /**
+     * Calculate similarity between two strings (simple word overlap)
+     */
+    calculateSimilarity(str1, str2) {
+        const words1 = new Set(str1.split(/\s+/));
+        const words2 = new Set(str2.split(/\s+/));
+        const intersection = [...words1].filter(w => words2.has(w));
+        const union = new Set([...words1, ...words2]);
+        return intersection.length / union.size;
+    }
+
+    /**
+     * Get specific action for the current message count
+     */
+    getSpecificAction(messageCount, scamType) {
+        const actions = [
+            "Ask who they are and which organization they represent",
+            "Express confusion and ask them to explain in simple terms",
+            "Show worry about your money and ask for their name",
+            "Mention you'll ask your son/daughter and request their phone number",
+            "Ask for their UPI ID saying you'll send money that way",
+            "Request them to send a link so you can verify",
+            "Ask for their employee ID and department name",
+            "Say the previous link didn't work, ask for another one",
+            "Mention network issues and ask for their callback number",
+            "Ask for branch address saying you'll visit in person",
+            "Request their manager's contact for verification",
+            "Say your family member is asking who's calling",
+            "Pretend OTP didn't come and ask them to resend",
+            "Ask for alternate UPI ID as the first one isn't working",
+            "Request official email confirmation of the issue"
+        ];
+
+        const index = Math.min(messageCount, actions.length - 1);
+        return actions[index];
     }
 
     /**
@@ -465,9 +522,10 @@ IMPORTANT: Just respond with the message text. No quotes, no labels, nothing els
 
     /**
      * Get varied fallback response based on scam type and message count
+     * Now filters out previously used responses
      */
-    getVariedFallbackResponse(scamType, messageCount) {
-        // Fallback responses organized by conversation stage
+    getVariedFallbackResponse(scamType, messageCount, previousResponses = []) {
+        // Extensive fallback responses organized by conversation stage
         const stageResponses = {
             early: [
                 "Arey beta, who is speaking? I am not understanding properly.",
@@ -475,7 +533,11 @@ IMPORTANT: Just respond with the message text. No quotes, no labels, nothing els
                 "What? Which account? I have many accounts...",
                 "Please wait, my glasses are not here. What you said?",
                 "Hello? Yes yes, I am listening. What is the matter?",
-                "Accha accha, but first tell me your name please."
+                "Accha accha, but first tell me your name please.",
+                "Ek minute... aap kahan se bol rahe ho?",
+                "Ji haan... main sun raha hoon... kya baat hai?",
+                "Account? Kaunsa account? SBI ya PNB?",
+                "Aap bank se ho? Kaunsi branch?"
             ],
             middle: [
                 "Oh my god, my money! Please help me beta. What should I do?",
@@ -483,7 +545,13 @@ IMPORTANT: Just respond with the message text. No quotes, no labels, nothing els
                 "Arey, I am very worried now. Which bank you are from? Tell me name.",
                 "Please send me in writing. I cannot remember all this.",
                 "Beta, what is your phone number? I want to call you back on landline.",
-                "My UPI is not working. Can you give your UPI? I will send from my son's phone."
+                "My UPI is not working. Can you give your UPI? I will send from my son's phone.",
+                "Bahut tension ho gayi mujhe... kya karun bataiye?",
+                "Aapka naam kya hai? Mujhe apne bête ko batana hai kaun call kar raha hai.",
+                "Employee ID batao apna, main note kar loon...",
+                "Ek kaam karo, mujhe email kar do saari details.",
+                "Aap video call pe face dikha sakte ho verification ke liye?",
+                "Mera beta police mein hai, usko poochna padega pehle..."
             ],
             late: [
                 "Still not working beta. Network problem maybe. Give me your number, I will call.",
@@ -491,7 +559,15 @@ IMPORTANT: Just respond with the message text. No quotes, no labels, nothing els
                 "My daughter is asking who is calling. What should I tell her?",
                 "Send me link again, previous one not opening. Very slow net.",
                 "Wait, I am going to bank. Give me branch address, I will meet you there.",
-                "You are from which department? Give me your employee ID I will note down."
+                "You are from which department? Give me your employee ID I will note down.",
+                "Aapke paas alternate number hai? Ye wala cut ho raha hai...",
+                "Main bank jaake personally milna chahta hoon, address do branch ka.",
+                "Mera damad CBI mein hai, usse baat karwa doon kya?",
+                "Telegram pe message karo, WhatsApp pe nahi aa raha.",
+                "Dusra UPI ID do, ye wala reject ho gaya.",
+                "Manager se baat karwa do please, important matter hai.",
+                "Letter bhejo ghar pe, main sign karke bhej dunga.",
+                "Apni ID card ki photo bhejo WhatsApp pe verification ke liye."
             ]
         };
 
@@ -505,9 +581,19 @@ IMPORTANT: Just respond with the message text. No quotes, no labels, nothing els
             responses = stageResponses.late;
         }
 
-        // Pick random response from appropriate stage
-        const randomIndex = Math.floor(Math.random() * responses.length);
-        return responses[randomIndex];
+        // Filter out responses that are similar to previous ones
+        const availableResponses = responses.filter(r =>
+            !previousResponses.some(prev =>
+                this.calculateSimilarity(prev.toLowerCase(), r.toLowerCase()) > 0.5
+            )
+        );
+
+        // If all responses used, use full list but pick different one
+        const finalResponses = availableResponses.length > 0 ? availableResponses : responses;
+
+        // Pick random response from available ones
+        const randomIndex = Math.floor(Math.random() * finalResponses.length);
+        return finalResponses[randomIndex];
     }
 
     /**
