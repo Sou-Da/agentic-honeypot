@@ -1,0 +1,13 @@
+node_modules
+npm-debug.log
+.env
+.env.local
+.git
+.gitignore
+README.md
+stress_test
+test
+*.md
+.DS_Store
+Thumbs.db
+data/*.db

@@ -1,0 +1,31 @@
+{
+    "name": "agentic-honeypot",
+    "version": "2.0.0",
+    "description": "AI-powered Agentic Honey-Pot for Scam Detection & Intelligence Extraction - Enhanced Edition",
+    "main": "src/server.js",
+    "type": "module",
+    "scripts": {
+        "start": "node src/server.js",
+        "dev": "node --watch src/server.js",
+        "test": "node test/comprehensiveTest.js",
+        "test:quick": "node test/testClient.js",
+        "db:stats": "node -e \"import('./src/services/databaseService.js').then(m => { m.databaseService.initialize(); console.log(JSON.stringify(m.databaseService.getStats(), null, 2)); })\"",
+        "db:export": "node -e \"import('./src/services/databaseService.js').then(m => { m.databaseService.initialize(); console.log(JSON.stringify(m.databaseService.exportData(), null, 2)); })\""
+    },
+    "dependencies": {
+        "@google/generative-ai": "^0.21.0",
+        "better-sqlite3": "^11.0.0",
+        "express": "^4.18.2",
+        "cors": "^2.8.5",
+        "dotenv": "^16.3.1",
+        "uuid": "^9.0.0"
+    },
+    "keywords": [
+        "honeypot",
+        "scam-detection",
+        "ai-agent",
+        "gemini"
+    ],
+    "author": "",
+    "license": "MIT"
+}
